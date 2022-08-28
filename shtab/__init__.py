@@ -4,8 +4,10 @@ import logging
 import re
 import sys
 from argparse import (
+    ONE_OR_MORE,
     REMAINDER,
     SUPPRESS,
+    ZERO_OR_MORE,
     Action,
     ArgumentParser,
     _AppendAction,
@@ -493,7 +495,7 @@ def complete_zsh(parser, root_prefix=None, preamble="", choice_functions=None):
 
     def format_positional(opt):
         return '"{nargs}:{help}:{pattern}"'.format(
-            nargs={"+": "(*)", "*": "(*):"}.get(opt.nargs, ""),
+            nargs={ONE_OR_MORE: "(*)", ZERO_OR_MORE: "(*):", REMAINDER: "(-)*"}.get(opt.nargs, ""),
             help=escape_zsh((opt.help or opt.dest).strip().split("\n")[0]),
             pattern=complete2pattern(opt.complete, "zsh", choice_type2fn) if hasattr(
                 opt, "complete") else
@@ -505,10 +507,12 @@ def complete_zsh(parser, root_prefix=None, preamble="", choice_functions=None):
     all_commands = {
         root_prefix: {
             "cmd": prog, "arguments": [
-                format_optional(opt) for opt in parser._get_optional_actions()
-                if opt.help != SUPPRESS], "help": (parser.description
-                                                   or "").strip().split("\n")[0], "commands": [],
-            "paths": []}}
+                format_optional(opt)
+                for opt in parser._get_optional_actions() if opt.help != SUPPRESS] + [
+                    format_positional(opt) for opt in parser._get_positional_actions()
+                    if opt.help != SUPPRESS and opt.choices is None],
+            "help": (parser.description
+                     or "").strip().split("\n")[0], "commands": [], "paths": []}}
 
     def recurse(parser, prefix, paths=None):
         paths = paths or []
@@ -575,11 +579,12 @@ def complete_zsh(parser, root_prefix=None, preamble="", choice_functions=None):
 
         return """\
 {prefix}() {{
-  local context state line curcontext="$curcontext"
+  local context state line curcontext="$curcontext" one_or_more='(-)*' reminder='(*)'
 
-  _arguments -C ${prefix}_options \\
-    ': :{prefix}_commands' \\
-    '*::: :->{name}'
+  if ((${{{prefix}_options[(I)${{(q)one_or_more}}*]}} + ${{{prefix}_options[(I)${{(q)reminder}}*]}} == 0)); then  # noqa: E501
+    {prefix}_options+=(': :{prefix}_commands' '*::: :->{name}')
+  fi
+  _arguments -C ${prefix}_options
 
   case $state in
     {name})
